@@ -1,5 +1,4 @@
 import pandas as pd
-import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.naive_bayes import GaussianNB
 from sklearn.metrics import precision_recall_fscore_support as score
@@ -10,40 +9,49 @@ import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
-def load_folder(path: str, converted: bool = False) -> list:
+def load_folder(path: str, sensors: dict = None, converted: bool = False) -> list:
     """
     Loads all files in a Folder
 
     :param path: folder Path
+    :param sensors: dict which tells which sensors should be loaded
     :param converted: are the files original or converted
     :return:
     """
+
     if converted:
-        return [load_converted_data(os.path.join(path, filename))
+        return [load_converted_data(os.path.join(path, filename), sensors)
                 for filename in glob.glob(os.path.join(path, '*.csv'))]
     else:
-        return [load_data(os.path.join(path, filename))
+        return [load_data(os.path.join(path, filename), sensors)
                 for filename in glob.glob(os.path.join(path, '*.ctm'))]
 
 
-def load_data(path: str) -> pd.DataFrame:
+def load_data(path: str, sensors: dict = None) -> pd.DataFrame:
     """
     Loads the provided data and returns it as a DataFrame
 
     :param path: path to the provided DataSet
+    :param sensors: dict which tells which sensors should be loaded
     :return: DataFrame with provided Data
     """
     f = pd.read_csv(path, sep=',')
     f.columns = f.columns.str.replace('#->', '')
+    if sensors:
+        included_sensors = filter_sensors(f.columns, sensors)
+        included_sensors.extend(['Timestamp', 'label'])
+        f = f[included_sensors]
     f['Timestamp'] = pd.to_datetime((f['Timestamp'] * 1000).astype(int), unit='ms')
+
     return f.set_index('Timestamp')
 
 
-def load_converted_data(path: str) -> pd.DataFrame:
+def load_converted_data(path: str, sensors: dict = None) -> pd.DataFrame:
     """
     Loads the "converted" provided data and returns it as a DataFrame
 
     :param path: path to the provided DataSet
+    :param sensors: dict which tells which sensors should be loaded
     :return: DataFrame with provided Data
     """
     f = pd.read_csv(path, sep=',')
@@ -52,6 +60,10 @@ def load_converted_data(path: str) -> pd.DataFrame:
     f['watch_TYPE_GYROSCOPE-Z'] = f['watch_TYPE_GYROSCOPE-Z'].str[:-1]
     f['watch_TYPE_GYROSCOPE-Z'] = f['watch_TYPE_GYROSCOPE-Z'].astype(float)
     f['Timestamp'] = f['Timestamp'].str[1:]
+    if sensors:
+        included_sensors = filter_sensors(f.columns, sensors)
+        included_sensors.extend(['Timestamp', 'label'])
+        f = f[included_sensors]
     f['Timestamp'] = pd.to_datetime((f['Timestamp'].astype(float) * 1000).astype(int), unit='ms')
     return f.set_index('Timestamp')
 
@@ -107,6 +119,27 @@ def group_label(data: pd.DataFrame) -> dict:
             label_dict[label] = []
         label_dict[label].append(data.drop(columns=['group']))
     return label_dict
+
+
+def filter_sensors(data_columns: list, sensors: dict) -> list:
+    """
+    filters for the columns in the dataset which contains the data listed in sensors as True and returns them in a List
+
+    :param data_columns: column of dataset
+    :param sensors: dict which tells which sensors should be loaded
+    :return: list with filtered columns
+    """
+
+    include_sensors = []
+    if sensors['phone_gyro']:
+        include_sensors.extend([col for col in data_columns if 'phone' in col and 'GYRO' in col])
+    if sensors['phone_accel']:
+        include_sensors.extend([col for col in data_columns if 'phone' in col and 'ACC' in col])
+    if sensors['watch_gyro']:
+        include_sensors.extend([col for col in data_columns if 'watch' in col and 'GYRO' in col])
+    if sensors['watch_accel']:
+        include_sensors.extend([col for col in data_columns if 'watch' in col and 'ACC' in col])
+    return include_sensors
 
 
 def filter_device(data: pd.DataFrame, dev: str, sensor: str = None) -> pd.DataFrame:
@@ -198,6 +231,11 @@ def print_score(labels: list, predictions: list) -> None:
     mean_recall = np.mean(all_recall, axis=0)
     mean_fscore = np.mean(all_fscore, axis=0)
 
+    mean_precision = np.append(mean_precision, np.mean(mean_precision))
+    mean_recall = np.append(mean_recall, np.mean(mean_recall))
+    mean_fscore = np.append(mean_fscore, np.mean(mean_fscore))
+    action_labels.append('Average')
+
     t = PrettyTable()
     t.add_column("labels", action_labels)
     t.add_column("precision", [float('%.3g' % n) for n in mean_precision])
@@ -249,34 +287,3 @@ def ten_fold(t_data: list, v_data: list):
         all_predictions.append(gaus.predict(v_data[n]['x']))
         all_true_labels.append(v_data[n]['y'])
     print_score(all_true_labels, all_predictions)
-
-
-if __name__ == '__main__':
-    ''' Input Parameter '''
-    step_size = '100ms'
-    window_size = 100
-    window_overlap = 0.5
-    folder_path = r"C:\Uni\ct1"
-    converted_files = True
-    use_features = {'mean': True,
-                    'std': True,
-                    'var': False,
-                    'min': True,
-                    'max': True}
-
-    ''' Loading Data'''
-    files = load_folder(folder_path, converted=converted_files)
-
-    ''' Resampling Data '''
-    print("Resampling: ", end='')
-    files = [resample(file, step_size) for file in files]
-    print()
-
-    ''' Extracting Features'''
-    x_files, y_files = extract_file_features(files, window_size, window_overlap, use_features)
-
-    ''' Split Data for 10-fold'''
-    training_data, validation_data = split_data(x_files, y_files)
-
-    ''' Ten Fold Validation'''
-    ten_fold(training_data, validation_data)
